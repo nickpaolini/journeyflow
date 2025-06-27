@@ -2,121 +2,138 @@ import { createServerClient } from '@/lib/supabase'
 import { NextResponse } from 'next/server'
 import { v4 as uuidv4 } from 'uuid'
 
+interface SaveRequest {
+  projectId: string
+  steps: Array<{
+    id?: string
+    title: string
+    description: string
+    x: number
+    y: number
+    width: number
+    height: number
+    stepType: string
+    stepColor: string
+    customColorOverride: boolean
+  }>
+  connections: Array<{
+    id?: string
+    fromId: string
+    toId: string
+  }>
+}
+
+interface StepData {
+  id: string
+  project_id: string
+  title: string
+  description: string
+  x: number
+  y: number
+  width: number
+  height: number
+  step_type: string
+  step_color: string
+  custom_color_override: boolean
+  order_index: number
+}
+
+interface ConnectionData {
+  id: string
+  project_id: string
+  from_step_id: string
+  to_step_id: string
+}
+
 export async function POST(request: Request) {
   try {
-    const supabase = createServerClient()
-    const body = await request.json()
-    
+    const body: SaveRequest = await request.json()
     console.log('Test save request body:', body)
-    
-    const { steps, connections, projectId } = body
-    
-    if (!projectId) {
-      return NextResponse.json({ error: 'Project ID is required' }, { status: 400 })
-    }
 
-    // First, ensure the project exists
-    const { data: existingProject, error: projectCheckError } = await supabase
-      .from('projects')
-      .select('id')
-      .eq('id', projectId)
-      .single()
+    const supabase = createServerClient()
 
-    if (projectCheckError && projectCheckError.code !== 'PGRST116') {
-      console.error('Error checking project:', projectCheckError)
-      return NextResponse.json({ 
-        error: 'Failed to check project', 
-        details: projectCheckError.message 
-      }, { status: 500 })
-    }
-
-    // If project doesn't exist, create it
-    if (!existingProject) {
-      const { error: createProjectError } = await supabase
+    // Ensure project exists
+    let projectId = body.projectId
+    if (projectId === 'test-project') {
+      // Create a test project if needed
+      const { data: project, error: projectError } = await supabase
         .from('projects')
         .insert({
-          id: projectId,
+          id: '550e8400-e29b-41d4-a716-446655440000',
+          user_id: '00000000-0000-0000-0000-000000000000',
           title: 'Test Project',
-          description: 'Auto-created test project',
-          user_id: '135dc32f-f223-48f0-a3a6-dad1448cbec6' // Use the provided valid UUID
+          description: 'Test project for development'
         })
+        .select()
+        .single()
 
-      if (createProjectError) {
-        console.error('Error creating project:', createProjectError)
-        return NextResponse.json({ 
-          error: 'Failed to create project', 
-          details: createProjectError.message 
-        }, { status: 500 })
+      if (projectError) {
+        console.error('Error creating project:', projectError)
+        return NextResponse.json({ error: 'Failed to create project' }, { status: 500 })
       }
+      projectId = project.id
     }
 
-    // Test saving steps
-    if (steps && steps.length > 0) {
-      const stepsToSave = steps.map((step: any, index: number) => ({
-        id: step.id || uuidv4(),
-        project_id: projectId,
-        title: step.title,
-        description: step.description,
-        x: Math.round(step.x),
-        y: Math.round(step.y),
-        width: Math.round(step.width),
-        height: Math.round(step.height),
-        step_type: step.stepType || 'action',
-        step_color: step.stepColor || '#10b981',
-        custom_color_override: step.customColorOverride || false,
-        order_index: index
-      }))
+    // Prepare steps data
+    const stepsToSave: StepData[] = body.steps.map((step, index) => ({
+      id: step.id || uuidv4(),
+      project_id: projectId,
+      title: step.title,
+      description: step.description,
+      x: Math.round(step.x),
+      y: Math.round(step.y),
+      width: Math.round(step.width),
+      height: Math.round(step.height),
+      step_type: step.stepType,
+      step_color: step.stepColor,
+      custom_color_override: step.customColorOverride,
+      order_index: index
+    }))
 
-      console.log('Steps to save:', stepsToSave)
+    console.log('Steps to save:', stepsToSave)
 
-      const { error: stepsError } = await supabase
-        .from('journey_steps')
-        .insert(stepsToSave)
+    // Save steps
+    const { error: stepsError } = await supabase
+      .from('journey_steps')
+      .upsert(stepsToSave, { onConflict: 'id' })
 
-      if (stepsError) {
-        console.error('Error saving steps:', stepsError)
-        return NextResponse.json({ 
-          error: 'Failed to save steps', 
-          details: stepsError.message 
-        }, { status: 500 })
-      }
+    if (stepsError) {
+      console.error('Error saving steps:', stepsError)
+      return NextResponse.json({ error: 'Failed to save steps' }, { status: 500 })
     }
 
-    // Test saving connections
-    if (connections && connections.length > 0) {
-      const connectionsToSave = connections.map((connection: any) => ({
-        id: connection.id || uuidv4(),
-        project_id: projectId,
-        from_step_id: connection.fromId,
-        to_step_id: connection.toId
-      }))
+    // Prepare connections data
+    const connectionsToSave: ConnectionData[] = body.connections.map(connection => ({
+      id: connection.id || uuidv4(),
+      project_id: projectId,
+      from_step_id: connection.fromId,
+      to_step_id: connection.toId
+    }))
 
-      console.log('Connections to save:', connectionsToSave)
-
+    // Save connections
+    if (connectionsToSave.length > 0) {
       const { error: connectionsError } = await supabase
         .from('connections')
-        .insert(connectionsToSave)
+        .upsert(connectionsToSave, { onConflict: 'id' })
 
       if (connectionsError) {
         console.error('Error saving connections:', connectionsError)
-        return NextResponse.json({ 
-          error: 'Failed to save connections', 
-          details: connectionsError.message 
-        }, { status: 500 })
+        return NextResponse.json({ error: 'Failed to save connections' }, { status: 500 })
       }
     }
 
     return NextResponse.json({ 
       success: true, 
-      message: 'Test save completed successfully',
-      savedSteps: steps?.length || 0,
-      savedConnections: connections?.length || 0
+      message: 'Data saved successfully',
+      projectId,
+      stepsCount: stepsToSave.length,
+      connectionsCount: connectionsToSave.length
     })
 
   } catch (error) {
-    console.error('Test save error:', error)
+    console.error('Error in test-save:', error)
     return NextResponse.json({ 
-      error: 'Test save failed', 
+      error: 'Internal server error',
       details: error instanceof Error ? error.message : 'Unknown error'
     }, { status: 500 })
   }

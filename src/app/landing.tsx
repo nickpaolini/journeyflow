@@ -8,9 +8,8 @@ import { Card, CardContent } from '@/components/ui/card'
 import { ArrowRight, Map, Users, Zap, Shield, Sparkles, CheckCircle } from 'lucide-react'
 
 export default function LandingPage() {
-  const { user } = useAuth()
   const router = useRouter()
-  const [isLoading, setIsLoading] = useState(false)
+  const { user } = useAuth()
 
   const handleGetStarted = () => {
     if (user) {

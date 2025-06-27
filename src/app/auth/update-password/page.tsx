@@ -20,6 +20,7 @@ export default function UpdatePasswordPage() {
   const { user } = useAuth()
   const router = useRouter()
   const searchParams = useSearchParams()
+  const token = searchParams.get('token')
 
   useEffect(() => {
     // Check if we have the necessary tokens in the URL
@@ -68,7 +69,7 @@ export default function UpdatePasswordPage() {
           router.push('/dashboard')
         }, 2000)
       }
-    } catch (error) {
+    } catch {
       toast.error('An unexpected error occurred')
     } finally {
       setLoading(false)

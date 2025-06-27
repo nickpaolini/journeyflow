@@ -5,6 +5,20 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 })
 
+interface AIResponse {
+  steps: Array<{
+    tempId: string
+    title: string
+    description: string
+    stepType?: string
+    stepColor?: string
+  }>
+  connections?: Array<{
+    fromTempId: string
+    toTempId: string
+  }>
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { prompt } = await request.json()

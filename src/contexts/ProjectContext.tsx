@@ -15,14 +15,34 @@ interface Project {
   is_public: boolean
 }
 
+interface JourneyStep {
+  id: string
+  title: string
+  description: string
+  x: number
+  y: number
+  width: number
+  height: number
+  stepType: string
+  stepColor: string
+  customColorOverride: boolean
+  highlighted: boolean
+}
+
+interface Connection {
+  id: string
+  fromId: string
+  toId: string
+}
+
 interface ProjectContextType {
   currentProject: Project | null
   projects: Project[]
   loading: boolean
   createProject: (title: string, description?: string) => Promise<Project | null>
   loadProject: (projectId: string) => Promise<void>
-  loadProjectData: (projectId: string) => Promise<{ steps: any[], connections: any[] } | undefined>
-  saveProject: (projectData: any) => Promise<void>
+  loadProjectData: (projectId: string) => Promise<{ steps: JourneyStep[], connections: Connection[] } | undefined>
+  saveProject: (projectData: { steps: JourneyStep[], connections: Connection[] }) => Promise<void>
   loadProjects: () => Promise<void>
   updateProject: (projectId: string, updates: Partial<Project>) => Promise<void>
   deleteProject: (projectId: string) => Promise<void>
@@ -188,7 +208,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   // Save project data (steps and connections)
-  const saveProject = useCallback(async (projectData: any) => {
+  const saveProject = useCallback(async (projectData: { steps: JourneyStep[], connections: Connection[] }) => {
     if (!currentProject || !user) return
 
     try {
@@ -221,7 +241,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
 
       // Save steps
       if (steps && steps.length > 0) {
-        const stepsToSave = steps.map((step: any, index: number) => ({
+        const stepsToSave = steps.map((step: JourneyStep, index: number) => ({
           id: step.id || uuidv4(),
           project_id: currentProject.id,
           title: step.title,
@@ -248,7 +268,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
 
       // Save connections
       if (connections && connections.length > 0) {
-        const connectionsToSave = connections.map((connection: any) => ({
+        const connectionsToSave = connections.map((connection: Connection) => ({
           id: connection.id || uuidv4(),
           project_id: currentProject.id,
           from_step_id: connection.fromId,

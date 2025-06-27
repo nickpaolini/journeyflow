@@ -14,21 +14,11 @@ import {
   Plus, 
   Save, 
   Download, 
-  Upload, 
-  Settings, 
   Trash2, 
   Star, 
   ArrowRight, 
-  MoreHorizontal,
   Map,
-  Users,
-  Zap,
-  Shield,
   Sparkles,
-  CheckCircle,
-  LogOut,
-  User,
-  Edit,
   ChevronDown
 } from 'lucide-react'
 import { v4 as uuidv4 } from 'uuid'
@@ -47,13 +37,8 @@ export default function DashboardPage() {
   const [selectedStep, setSelectedStep] = useState<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
-  const [editingStep, setEditingStep] = useState<string | null>(null)
-  const [editTitle, setEditTitle] = useState("")
-  const [editDescription, setEditDescription] = useState("")
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [stepToDelete, setStepToDelete] = useState<string | null>(null)
-  const [showConnectionDialog, setShowConnectionDialog] = useState(false)
-  const [connectionFrom, setConnectionFrom] = useState<string | null>(null)
   
   // New state for drag-to-connect functionality
   const [isConnecting, setIsConnecting] = useState(false)
@@ -86,31 +71,19 @@ export default function DashboardPage() {
   const [hoveredConnections, setHoveredConnections] = useState<Set<string>>(new Set())
   const [hoverTimeouts, setHoverTimeouts] = useState<Record<string, NodeJS.Timeout>>({})
 
-  // New state for micro-interactions and animations
-  const [animatingSteps, setAnimatingSteps] = useState<Set<string>>(new Set())
-  const [deletingSteps, setDeletingSteps] = useState<Set<string>>(new Set())
-  const [connectingSteps, setConnectingSteps] = useState<Set<string>>(new Set())
   const [isSaving, setIsSaving] = useState(false)
-  const [saveMessage, setSaveMessage] = useState("")
-  const [errorFields, setErrorFields] = useState<Set<string>>(new Set())
 
   // Canvas navigation state
   const [canvasTransform, setCanvasTransform] = useState({ x: 0, y: 0, scale: 1 })
   const [isPanning, setIsPanning] = useState(false)
   const [panStart, setPanStart] = useState({ x: 0, y: 0 })
-  const [showGrid, setShowGrid] = useState(false)
-  const [snapToGrid, setSnapToGrid] = useState(false)
-  const [alignmentGuides, setAlignmentGuides] = useState<{ x?: number, y?: number }>({})
-  const [isClient, setIsClient] = useState(false)
 
   // Project management state
-  const [showNewProjectDialog, setShowNewProjectDialog] = useState(false)
   const [newProjectTitle, setNewProjectTitle] = useState("")
   const [newProjectDescription, setNewProjectDescription] = useState("")
   const [showProjectSelector, setShowProjectSelector] = useState(false)
 
   // Viewport and coordinate system utilities
-  const viewportRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
   const stepRefs = useRef<{ [key: string]: HTMLDivElement | null }>({})
   const inlineEditInputRef = useRef<HTMLInputElement>(null)
@@ -118,7 +91,7 @@ export default function DashboardPage() {
 
   // Check if we're on the client side
   useEffect(() => {
-    setIsClient(true)
+    // Client-side initialization if needed
   }, [])
 
   // Load project data when currentProject changes
@@ -582,7 +555,6 @@ export default function DashboardPage() {
         setSteps([])
         setConnections([])
         setSelectedStep(null)
-        setEditingStep(null)
         setShowProjectSelector(false)
         setNewProjectTitle("")
         setNewProjectDescription("")
@@ -653,7 +625,13 @@ export default function DashboardPage() {
       const startX = centerX - (Math.min(data.steps.length, maxStepsPerRow) * horizontalSpacing) / 2
       const startY = centerY - (Math.ceil(data.steps.length / maxStepsPerRow) * verticalSpacing) / 2
       
-      data.steps.forEach((aiStep: any, index: number) => {
+      data.steps.forEach((aiStep: {
+        tempId: string
+        title: string
+        description: string
+        stepType?: string
+        stepColor?: string
+      }, index: number) => {
         const newId = generateId()
         idMap[aiStep.tempId] = newId
         
@@ -690,7 +668,7 @@ export default function DashboardPage() {
       
       // Also create connections from AI response if provided
       if (data.connections) {
-        data.connections.forEach((aiConn: any) => {
+        data.connections.forEach((aiConn: { fromTempId: string; toTempId: string }) => {
           const fromId = idMap[aiConn.fromTempId]
           const toId = idMap[aiConn.toTempId]
           if (fromId && toId) {
@@ -1568,9 +1546,9 @@ interface JourneyStep {
   width: number
   height: number
   highlighted?: boolean
-  stepType?: string
-  stepColor?: string
-  customColorOverride?: boolean
+  stepType: string
+  stepColor: string
+  customColorOverride: boolean
 }
 
 interface Connection {
