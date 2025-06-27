@@ -1,0 +1,1168 @@
+"use client"
+
+import { useState, useRef, useCallback, useEffect } from "react"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { ModeToggle } from "@/components/mode-toggle"
+import { Plus, Edit, Trash2, ArrowRight, Download, Sparkles, Star } from "lucide-react"
+import { useTheme } from "next-themes"
+
+// Types for the customer journey mapping application
+interface JourneyStep {
+  id: string
+  title: string
+  description: string
+  x: number
+  y: number
+  width: number
+  height: number
+  highlighted?: boolean
+}
+
+interface Connection {
+  id: string
+  fromId: string
+  toId: string
+}
+
+// Main App component for customer journey mapping
+export default function App() {
+  // State management for steps and connections
+  const [steps, setSteps] = useState<JourneyStep[]>([])
+  const [connections, setConnections] = useState<Connection[]>([])
+  const [selectedStep, setSelectedStep] = useState<string | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
+  const [editingStep, setEditingStep] = useState<string | null>(null)
+  const [editTitle, setEditTitle] = useState("")
+  const [editDescription, setEditDescription] = useState("")
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [stepToDelete, setStepToDelete] = useState<string | null>(null)
+  const [showConnectionDialog, setShowConnectionDialog] = useState(false)
+  const [connectionFrom, setConnectionFrom] = useState<string | null>(null)
+  
+  // New state for drag-to-connect functionality
+  const [isConnecting, setIsConnecting] = useState(false)
+  const [connectingFrom, setConnectingFrom] = useState<string | null>(null)
+  const [dragConnection, setDragConnection] = useState({ x: 0, y: 0 })
+  const [hoveredStep, setHoveredStep] = useState<string | null>(null)
+
+  // New state for inline editing
+  const [inlineEditing, setInlineEditing] = useState<string | null>(null)
+  const [inlineEditType, setInlineEditType] = useState<'title' | 'description' | null>(null)
+  const [inlineEditValue, setInlineEditValue] = useState("")
+  const [isExporting, setIsExporting] = useState(false)
+
+  // New state for resizing functionality
+  const [isResizing, setIsResizing] = useState(false)
+  const [resizingStep, setResizingStep] = useState<string | null>(null)
+  const [resizeHandle, setResizeHandle] = useState<'se' | 'sw' | 'ne' | 'nw' | null>(null)
+  const [resizeStart, setResizeStart] = useState({ x: 0, y: 0, width: 0, height: 0 })
+
+  // New state for AI generation
+  const [showAIModal, setShowAIModal] = useState(false)
+  const [aiPrompt, setAIPrompt] = useState("")
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [aiError, setAIError] = useState<string | null>(null)
+
+  // Theme hook
+  const { theme, resolvedTheme } = useTheme()
+  const [mounted, setMounted] = useState(false)
+
+  // Refs for canvas and step elements
+  const canvasRef = useRef<HTMLDivElement>(null)
+  const stepRefs = useRef<{ [key: string]: HTMLDivElement | null }>({})
+  const inlineEditInputRef = useRef<HTMLInputElement>(null)
+  const inlineEditTextareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Handle mounting to prevent hydration mismatch
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  // Get theme colors for export
+  const getThemeColors = useCallback(() => {
+    const isDark = resolvedTheme === 'dark' || theme === 'dark'
+    
+    if (isDark) {
+      return {
+        background: '#1e293b', // dark background
+        card: '#334155', // dark card
+        cardBorder: '#475569', // dark border
+        text: '#f8fafc', // light text
+        textMuted: '#cbd5e1', // muted text
+        connection: '#94a3b8', // connection lines
+        arrow: '#94a3b8' // arrow color
+      }
+    } else {
+      return {
+        background: '#f8fafc', // light background
+        card: '#ffffff', // white card
+        cardBorder: '#e2e8f0', // light border
+        text: '#1e293b', // dark text
+        textMuted: '#64748b', // muted text
+        connection: '#64748b', // connection lines
+        arrow: '#64748b' // arrow color
+      }
+    }
+  }, [theme, resolvedTheme])
+
+  // Generate unique ID for new steps
+  const generateId = () => `step-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+
+  // Add a new step to the canvas
+  const addStep = useCallback(() => {
+    const newStep: JourneyStep = {
+      id: generateId(),
+      title: `Step ${steps.length + 1}`,
+      description: "Describe this step...",
+      x: 100 + Math.random() * 200,
+      y: 100 + Math.random() * 200,
+      width: 256,
+      height: 120,
+      highlighted: false,
+    }
+    setSteps(prev => [...prev, newStep])
+  }, [steps.length])
+
+  // Toggle step highlight
+  const toggleStepHighlight = useCallback((stepId: string) => {
+    setSteps(prev => prev.map(step => 
+      step.id === stepId ? { ...step, highlighted: !step.highlighted } : step
+    ))
+  }, [])
+
+  // Update step position during drag
+  const updateStepPosition = useCallback((id: string, x: number, y: number) => {
+    setSteps(prev => prev.map(step => 
+      step.id === id ? { ...step, x, y } : step
+    ))
+  }, [])
+
+  // Handle mouse down on a step (start dragging)
+  const handleMouseDown = useCallback((e: React.MouseEvent, stepId: string) => {
+    e.preventDefault()
+    const step = steps.find(s => s.id === stepId)
+    if (!step) return
+
+    const rect = e.currentTarget.getBoundingClientRect()
+    const offsetX = e.clientX - rect.left
+    const offsetY = e.clientY - rect.top
+
+    setDragOffset({ x: offsetX, y: offsetY })
+    setSelectedStep(stepId)
+    setIsDragging(true)
+  }, [steps])
+
+  // Handle mouse move during drag
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    if (!isDragging || !selectedStep || !canvasRef.current) return
+
+    const canvasRect = canvasRef.current.getBoundingClientRect()
+    const newX = e.clientX - canvasRect.left - dragOffset.x
+    const newY = e.clientY - canvasRect.top - dragOffset.y
+
+    // Constrain to canvas bounds
+    const constrainedX = Math.max(0, Math.min(newX, canvasRect.width - 200))
+    const constrainedY = Math.max(0, Math.min(newY, canvasRect.height - 100))
+
+    updateStepPosition(selectedStep, constrainedX, constrainedY)
+  }, [isDragging, selectedStep, dragOffset, updateStepPosition])
+
+  // Handle mouse up (end dragging)
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false)
+    setSelectedStep(null)
+  }, [])
+
+  // Start resizing
+  const startResize = useCallback((e: React.MouseEvent, stepId: string, handle: 'se' | 'sw' | 'ne' | 'nw') => {
+    e.preventDefault()
+    e.stopPropagation()
+    
+    const step = steps.find(s => s.id === stepId)
+    if (!step) return
+
+    const rect = e.currentTarget.getBoundingClientRect()
+    const offsetX = e.clientX - rect.left
+    const offsetY = e.clientY - rect.top
+
+    setIsResizing(true)
+    setResizingStep(stepId)
+    setResizeHandle(handle)
+    setResizeStart({
+      x: step.x,
+      y: step.y,
+      width: step.width,
+      height: step.height
+    })
+  }, [steps])
+
+  // Handle resize mouse move
+  const handleResizeMouseMove = useCallback((e: MouseEvent) => {
+    if (!isResizing || !resizingStep || !resizeHandle || !canvasRef.current) return
+
+    const canvasRect = canvasRef.current.getBoundingClientRect()
+    const mouseX = e.clientX - canvasRect.left
+    const mouseY = e.clientY - canvasRect.top
+
+    setSteps(prev => prev.map(step => {
+      if (step.id !== resizingStep) return step
+
+      let newX = step.x
+      let newY = step.y
+      let newWidth = step.width
+      let newHeight = step.height
+
+      const minWidth = 200
+      const minHeight = 80
+
+      switch (resizeHandle) {
+        case 'se': // bottom-right
+          newWidth = Math.max(minWidth, mouseX - step.x)
+          newHeight = Math.max(minHeight, mouseY - step.y)
+          break
+        case 'sw': // bottom-left
+          newWidth = Math.max(minWidth, resizeStart.x + resizeStart.width - mouseX)
+          newHeight = Math.max(minHeight, mouseY - step.y)
+          newX = mouseX
+          break
+        case 'ne': // top-right
+          newWidth = Math.max(minWidth, mouseX - step.x)
+          newHeight = Math.max(minHeight, resizeStart.y + resizeStart.height - mouseY)
+          newY = mouseY
+          break
+        case 'nw': // top-left
+          newWidth = Math.max(minWidth, resizeStart.x + resizeStart.width - mouseX)
+          newHeight = Math.max(minHeight, resizeStart.y + resizeStart.height - mouseY)
+          newX = mouseX
+          newY = mouseY
+          break
+      }
+
+      return { ...step, x: newX, y: newY, width: newWidth, height: newHeight }
+    }))
+  }, [isResizing, resizingStep, resizeHandle, resizeStart])
+
+  // Handle resize mouse up
+  const handleResizeMouseUp = useCallback(() => {
+    setIsResizing(false)
+    setResizingStep(null)
+    setResizeHandle(null)
+  }, [])
+
+  // Handle double click to edit inline
+  const handleDoubleClick = useCallback((step: JourneyStep, type: 'title' | 'description') => {
+    setInlineEditing(step.id)
+    setInlineEditType(type)
+    setInlineEditValue(type === 'title' ? step.title : step.description)
+    
+    // Focus the input after a brief delay to ensure it's rendered
+    setTimeout(() => {
+      if (type === 'title' && inlineEditInputRef.current) {
+        inlineEditInputRef.current.focus()
+        inlineEditInputRef.current.select()
+      } else if (type === 'description' && inlineEditTextareaRef.current) {
+        inlineEditTextareaRef.current.focus()
+        inlineEditTextareaRef.current.select()
+      }
+    }, 10)
+  }, [])
+
+  // Save inline edit
+  const saveInlineEdit = useCallback(() => {
+    if (!inlineEditing || !inlineEditType) return
+
+    setSteps(prev => prev.map(step => 
+      step.id === inlineEditing 
+        ? { 
+            ...step, 
+            [inlineEditType]: inlineEditValue 
+          }
+        : step
+    ))
+    
+    setInlineEditing(null)
+    setInlineEditType(null)
+    setInlineEditValue("")
+  }, [inlineEditing, inlineEditType, inlineEditValue])
+
+  // Cancel inline edit
+  const cancelInlineEdit = useCallback(() => {
+    setInlineEditing(null)
+    setInlineEditType(null)
+    setInlineEditValue("")
+  }, [])
+
+  // Handle inline edit key press
+  const handleInlineEditKeyPress = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      saveInlineEdit()
+    } else if (e.key === 'Escape') {
+      cancelInlineEdit()
+    }
+  }, [saveInlineEdit, cancelInlineEdit])
+
+  // Start editing a step (for dialog)
+  const startEditing = useCallback((step: JourneyStep) => {
+    setEditingStep(step.id)
+    setEditTitle(step.title)
+    setEditDescription(step.description)
+  }, [])
+
+  // Save edited step (for dialog)
+  const saveEdit = useCallback(() => {
+    if (!editingStep) return
+
+    setSteps(prev => prev.map(step => 
+      step.id === editingStep 
+        ? { ...step, title: editTitle, description: editDescription }
+        : step
+    ))
+    setEditingStep(null)
+    setEditTitle("")
+    setEditDescription("")
+  }, [editingStep, editTitle, editDescription])
+
+  // Cancel editing (for dialog)
+  const cancelEdit = useCallback(() => {
+    setEditingStep(null)
+    setEditTitle("")
+    setEditDescription("")
+  }, [])
+
+  // Delete a step and its connections
+  const deleteStep = useCallback((stepId: string) => {
+    setSteps(prev => prev.filter(step => step.id !== stepId))
+    setConnections(prev => prev.filter(conn => conn.fromId !== stepId && conn.toId !== stepId))
+    setStepToDelete(null)
+    setShowDeleteDialog(false)
+  }, [])
+
+  // Start connection process
+  const startConnection = useCallback((fromId: string) => {
+    setConnectionFrom(fromId)
+    setShowConnectionDialog(true)
+  }, [])
+
+  // Create connection between steps
+  const createConnection = useCallback((toId: string) => {
+    if (!connectionFrom || connectionFrom === toId) return
+
+    // Check for duplicate connections
+    const isDuplicate = connections.some(conn => 
+      conn.fromId === connectionFrom && conn.toId === toId
+    )
+
+    if (!isDuplicate) {
+      const newConnection: Connection = {
+        id: generateId(),
+        fromId: connectionFrom,
+        toId: toId,
+      }
+      setConnections(prev => [...prev, newConnection])
+    }
+
+    setConnectionFrom(null)
+    setShowConnectionDialog(false)
+  }, [connectionFrom, connections])
+
+  // Start drag-to-connect
+  const startDragConnect = useCallback((e: React.MouseEvent, fromId: string) => {
+    e.preventDefault()
+    e.stopPropagation()
+    console.log('Starting drag connect from:', fromId) // Debug log
+    
+    setIsConnecting(true)
+    setConnectingFrom(fromId)
+    
+    if (canvasRef.current) {
+      const canvasRect = canvasRef.current.getBoundingClientRect()
+      const mouseX = e.clientX - canvasRect.left
+      const mouseY = e.clientY - canvasRect.top
+      
+      console.log('Initial drag position:', { x: mouseX, y: mouseY }) // Debug log
+      
+      setDragConnection({
+        x: mouseX,
+        y: mouseY
+      })
+    }
+  }, [])
+
+  // Handle mouse move during connection drag
+  const handleConnectionMouseMove = useCallback((e: MouseEvent) => {
+    if (!isConnecting || !canvasRef.current) return
+
+    const canvasRect = canvasRef.current.getBoundingClientRect()
+    const mouseX = e.clientX - canvasRect.left
+    const mouseY = e.clientY - canvasRect.top
+    
+    setDragConnection({
+      x: mouseX,
+      y: mouseY
+    })
+
+    // Check if hovering over a step
+    const hoveredStepId = Object.keys(stepRefs.current).find(stepId => {
+      const stepEl = stepRefs.current[stepId]
+      if (!stepEl) return false
+      
+      const rect = stepEl.getBoundingClientRect()
+      return e.clientX >= rect.left && e.clientX <= rect.right &&
+             e.clientY >= rect.top && e.clientY <= rect.bottom
+    })
+
+    setHoveredStep(hoveredStepId || null)
+  }, [isConnecting])
+
+  // Handle mouse up during connection drag
+  const handleConnectionMouseUp = useCallback((e: MouseEvent) => {
+    if (!isConnecting || !connectingFrom) return
+
+    console.log('Ending drag connect') // Debug log
+
+    // Check if dropped on a valid step
+    const droppedStepId = Object.keys(stepRefs.current).find(stepId => {
+      const stepEl = stepRefs.current[stepId]
+      if (!stepEl) return false
+      
+      const rect = stepEl.getBoundingClientRect()
+      return e.clientX >= rect.left && e.clientX <= rect.right &&
+             e.clientY >= rect.top && e.clientY <= rect.bottom
+    })
+
+    if (droppedStepId && droppedStepId !== connectingFrom) {
+      console.log('Creating connection from', connectingFrom, 'to', droppedStepId) // Debug log
+      
+      // Check for duplicate connections
+      const isDuplicate = connections.some(conn => 
+        conn.fromId === connectingFrom && conn.toId === droppedStepId
+      )
+
+      if (!isDuplicate) {
+        const newConnection: Connection = {
+          id: generateId(),
+          fromId: connectingFrom,
+          toId: droppedStepId,
+        }
+        setConnections(prev => [...prev, newConnection])
+      }
+    }
+
+    setIsConnecting(false)
+    setConnectingFrom(null)
+    setHoveredStep(null)
+  }, [isConnecting, connectingFrom, connections])
+
+  // Calculate connection path between two steps
+  const getConnectionPath = useCallback((fromId: string, toId: string) => {
+    const fromStep = steps.find(s => s.id === fromId)
+    const toStep = steps.find(s => s.id === toId)
+    
+    if (!fromStep || !toStep) return ""
+
+    const fromX = fromStep.x + fromStep.width / 2 // Center of step
+    const fromY = fromStep.y + fromStep.height / 2  // Center of step
+    const toX = toStep.x + toStep.width / 2
+    const toY = toStep.y + toStep.height / 2
+
+    // Calculate control points for curved line
+    const dx = toX - fromX
+    const dy = toY - fromY
+    const controlX = fromX + dx * 0.5
+    const controlY = fromY + dy * 0.5
+
+    return `M ${fromX} ${fromY} Q ${controlX} ${controlY} ${toX} ${toY}`
+  }, [steps])
+
+  // Get the starting position for drag connection
+  const getDragConnectionStart = useCallback(() => {
+    if (!connectingFrom) return { x: 0, y: 0 }
+    
+    const fromStep = steps.find(s => s.id === connectingFrom)
+    if (!fromStep) return { x: 0, y: 0 }
+    
+    return {
+      x: fromStep.x + fromStep.width / 2, // Center of step
+      y: fromStep.y + fromStep.height / 2  // Center of step
+    }
+  }, [connectingFrom, steps])
+
+  // Export as SVG
+  const exportAsSVG = useCallback(() => {
+    if (!canvasRef.current) return
+    
+    setIsExporting(true)
+    try {
+      const canvasRect = canvasRef.current.getBoundingClientRect()
+      const colors = getThemeColors()
+      
+      // Create SVG content
+      const svgContent = `
+        <svg width="${canvasRect.width}" height="${canvasRect.height}" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker
+              id="arrowhead"
+              markerWidth="10"
+              markerHeight="7"
+              refX="9"
+              refY="3.5"
+              orient="auto"
+            >
+              <polygon
+                id="arrowhead"
+                points="0 0, 10 3.5, 0 7"
+                fill="${colors.arrow}"
+              />
+            </marker>
+          </defs>
+          
+          <!-- Background -->
+          <rect width="100%" height="100%" fill="${colors.background}" />
+          
+          <!-- Connections -->
+          ${connections.map(connection => {
+            const path = getConnectionPath(connection.fromId, connection.toId)
+            return `<path d="${path}" stroke="${colors.connection}" stroke-width="2" fill="none" marker-end="url(#arrowhead)" />`
+          }).join('')}
+          
+          <!-- Steps -->
+          ${steps.map(step => `
+            <g transform="translate(${step.x}, ${step.y})">
+              <!-- Card background -->
+              <rect width="${step.width}" height="${step.height}" rx="8" fill="${colors.card}" stroke="${colors.cardBorder}" stroke-width="1" />
+              
+              <!-- Title -->
+              <text x="16" y="28" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="600" fill="${colors.text}">
+                ${step.title}
+              </text>
+              
+              <!-- Description -->
+              <text x="16" y="48" font-family="system-ui, -apple-system, sans-serif" font-size="14" fill="${colors.textMuted}">
+                ${step.description}
+              </text>
+            </g>
+          `).join('')}
+        </svg>
+      `
+      
+      // Create download link
+      const blob = new Blob([svgContent], { type: 'image/svg+xml' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `customer-journey-map-${new Date().toISOString().split('T')[0]}.svg`
+      link.click()
+      
+      // Clean up
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error('Error exporting SVG:', error)
+      alert('Export failed. Please try again.')
+    } finally {
+      setIsExporting(false)
+    }
+  }, [steps, connections, getConnectionPath, getThemeColors])
+
+  // Export as CSV
+  const exportAsCSV = useCallback(() => {
+    if (steps.length === 0) {
+      alert('No steps to export.')
+      return
+    }
+    
+    setIsExporting(true)
+    try {
+      // Create CSV content with numbered steps
+      const csvContent = [
+        'Step Number,Title,Description',
+        ...steps.map((step, index) => {
+          const stepNumber = index + 1
+          // Escape quotes and wrap in quotes to handle commas in content
+          const escapedTitle = `"${step.title.replace(/"/g, '""')}"`
+          const escapedDescription = `"${step.description.replace(/"/g, '""')}"`
+          return `${stepNumber},${escapedTitle},${escapedDescription}`
+        })
+      ].join('\n')
+      
+      // Create download link
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `customer-journey-steps-${new Date().toISOString().split('T')[0]}.csv`
+      link.click()
+      
+      // Clean up
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error('Error exporting CSV:', error)
+      alert('Export failed. Please try again.')
+    } finally {
+      setIsExporting(false)
+    }
+  }, [steps])
+
+  // Generate journey with AI
+  const generateJourneyWithAI = useCallback(async () => {
+    if (!aiPrompt.trim()) {
+      setAIError("Please enter a description of the customer journey.")
+      return
+    }
+
+    setIsGenerating(true)
+    setAIError(null)
+
+    try {
+      // For now, we'll simulate AI generation with mock data
+      // In production, this would call your Vertex AI endpoint
+      const mockResponse = await new Promise(resolve => setTimeout(() => {
+        resolve({
+          journeyTitle: "Generated Customer Journey",
+          steps: [
+            { tempId: "s1", title: "Customer Discovery", description: "User first learns about our product through social media, ads, or word of mouth." },
+            { tempId: "s2", title: "Website Visit", description: "Customer visits our website to learn more about features and pricing." },
+            { tempId: "s3", title: "Sign Up", description: "User creates an account to try the product with basic features." },
+            { tempId: "s4", title: "First Use", description: "Customer explores the interface and tries basic functionality." },
+            { tempId: "s5", title: "Purchase Decision", description: "User evaluates the value and decides whether to upgrade to paid plan." }
+          ],
+          connections: [
+            { fromTempId: "s1", toTempId: "s2" },
+            { fromTempId: "s2", toTempId: "s3" },
+            { fromTempId: "s3", toTempId: "s4" },
+            { fromTempId: "s4", toTempId: "s5" }
+          ]
+        })
+      }, 2000)) // Simulate 2 second delay
+
+      // Process AI response and add to canvas
+      const aiResponse = mockResponse as any
+      
+      // Create new steps from AI response
+      const newSteps: JourneyStep[] = []
+      const idMap = new Map<string, string>()
+      
+      let currentX = 50
+      const startY = 100
+      const stepSpacing = 350
+
+      aiResponse.steps.forEach((aiStep: any, index: number) => {
+        const newId = generateId()
+        idMap.set(aiStep.tempId, newId)
+        
+        newSteps.push({
+          id: newId,
+          title: aiStep.title,
+          description: aiStep.description,
+          x: currentX,
+          y: startY + (index % 2) * 200, // Alternate rows for better layout
+          width: 256,
+          height: 120,
+          highlighted: false,
+        })
+        
+        currentX += stepSpacing
+      })
+
+      // Create new connections from AI response
+      const newConnections: Connection[] = []
+      aiResponse.connections.forEach((aiConn: any) => {
+        const fromId = idMap.get(aiConn.fromTempId)
+        const toId = idMap.get(aiConn.toTempId)
+        if (fromId && toId) {
+          newConnections.push({
+            id: generateId(),
+            fromId: fromId,
+            toId: toId,
+          })
+        }
+      })
+
+      // Add new steps and connections to canvas
+      setSteps(prev => [...prev, ...newSteps])
+      setConnections(prev => [...prev, ...newConnections])
+      
+      // Close modal and reset
+      setShowAIModal(false)
+      setAIPrompt("")
+      
+    } catch (error) {
+      console.error('Error generating journey:', error)
+      setAIError('Failed to generate journey. Please try again.')
+    } finally {
+      setIsGenerating(false)
+    }
+  }, [aiPrompt, generateId])
+
+  // Event listeners for drag functionality
+  useEffect(() => {
+    if (isDragging) {
+      document.addEventListener('mousemove', handleMouseMove)
+      document.addEventListener('mouseup', handleMouseUp)
+      return () => {
+        document.removeEventListener('mousemove', handleMouseMove)
+        document.removeEventListener('mouseup', handleMouseUp)
+      }
+    }
+  }, [isDragging, handleMouseMove, handleMouseUp])
+
+  // Event listeners for connection drag functionality
+  useEffect(() => {
+    if (isConnecting) {
+      document.addEventListener('mousemove', handleConnectionMouseMove)
+      document.addEventListener('mouseup', handleConnectionMouseUp)
+      return () => {
+        document.removeEventListener('mousemove', handleConnectionMouseMove)
+        document.removeEventListener('mouseup', handleConnectionMouseUp)
+      }
+    }
+  }, [isConnecting, handleConnectionMouseMove, handleConnectionMouseUp])
+
+  // Event listeners for resize functionality
+  useEffect(() => {
+    if (isResizing) {
+      document.addEventListener('mousemove', handleResizeMouseMove)
+      document.addEventListener('mouseup', handleResizeMouseUp)
+      return () => {
+        document.removeEventListener('mousemove', handleResizeMouseMove)
+        document.removeEventListener('mouseup', handleResizeMouseUp)
+      }
+    }
+  }, [isResizing, handleResizeMouseMove, handleResizeMouseUp])
+
+  return (
+    <div className="min-h-screen bg-background">
+      {/* Header with controls */}
+      <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <div className="container flex h-14 items-center justify-between px-4">
+          <div className="flex items-center gap-4">
+            <h1 className="text-lg font-semibold">Customer Journey Mapper</h1>
+            {isConnecting && (
+              <div className="flex items-center gap-2 px-3 py-1 bg-primary/10 text-primary rounded-md text-sm">
+                <ArrowRight className="h-4 w-4" />
+                <span>Drag to connect steps</span>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button onClick={addStep} className="flex items-center gap-2">
+              <Plus className="h-4 w-4" />
+              Add Step
+            </Button>
+            <Button 
+              onClick={() => setShowAIModal(true)}
+              disabled={isGenerating}
+              variant="outline"
+              className="flex items-center gap-2"
+            >
+              <Sparkles className="h-4 w-4" />
+              {isGenerating ? 'Generating...' : 'Generate with AI'}
+            </Button>
+            <Button 
+              onClick={exportAsSVG} 
+              disabled={isExporting}
+              variant="outline"
+              className="flex items-center gap-2"
+            >
+              <Download className="h-4 w-4" />
+              {isExporting ? 'Exporting...' : mounted ? `Export SVG (${resolvedTheme || theme || 'system'})` : 'Export SVG'}
+            </Button>
+            <Button 
+              onClick={exportAsCSV} 
+              disabled={isExporting}
+              variant="outline"
+              className="flex items-center gap-2"
+            >
+              <Download className="h-4 w-4" />
+              {isExporting ? 'Exporting...' : 'Export CSV'}
+            </Button>
+            <ModeToggle />
+          </div>
+        </div>
+      </header>
+
+      {/* Main canvas area */}
+      <main className="flex-1 relative overflow-hidden">
+        <div 
+          ref={canvasRef}
+          className="w-full h-[calc(100vh-3.5rem)] relative bg-muted/20"
+          style={{ 
+            cursor: isDragging ? 'grabbing' : 
+                    isConnecting ? 'crosshair' : 
+                    isResizing ? 'move' : 'default' 
+          }}
+        >
+          {/* SVG overlay for connections */}
+          <svg 
+            className="absolute inset-0 w-full h-full pointer-events-none"
+            style={{ zIndex: 1 }}
+          >
+            {connections.map(connection => {
+              const path = getConnectionPath(connection.fromId, connection.toId)
+              
+              return (
+                <g key={connection.id}>
+                  <path
+                    d={path}
+                    stroke="#64748b"
+                    strokeWidth="2"
+                    fill="none"
+                    markerEnd="url(#arrowhead)"
+                  />
+                  <defs>
+                    <marker
+                      id="arrowhead"
+                      markerWidth="10"
+                      markerHeight="7"
+                      refX="9"
+                      refY="3.5"
+                      orient="auto"
+                    >
+                      <polygon
+                        points="0 0, 10 3.5, 0 7"
+                        fill="#64748b"
+                      />
+                    </marker>
+                  </defs>
+                </g>
+              )
+            })}
+
+            {/* Drag connection line */}
+            {isConnecting && connectingFrom && (
+              <g>
+                <path
+                  d={`M ${getDragConnectionStart().x} ${getDragConnectionStart().y} L ${dragConnection.x} ${dragConnection.y}`}
+                  stroke="#3b82f6"
+                  strokeWidth="3"
+                  strokeDasharray="8,4"
+                  fill="none"
+                  markerEnd="url(#arrowhead-drag)"
+                  style={{ pointerEvents: 'none' }}
+                />
+                <defs>
+                  <marker
+                    id="arrowhead-drag"
+                    markerWidth="12"
+                    markerHeight="8"
+                    refX="10"
+                    refY="4"
+                    orient="auto"
+                  >
+                    <polygon
+                      points="0 0, 12 4, 0 8"
+                      fill="#3b82f6"
+                    />
+                  </marker>
+                </defs>
+              </g>
+            )}
+          </svg>
+
+          {/* Journey step cards */}
+          {steps.map(step => (
+            <div
+              key={step.id}
+              ref={(el) => { stepRefs.current[step.id] = el }}
+              className={`absolute cursor-grab active:cursor-grabbing transition-all duration-200 ${
+                selectedStep === step.id ? 'shadow-lg ring-2 ring-primary' : 'shadow-md'
+              } ${hoveredStep === step.id && isConnecting ? 'ring-2 ring-primary ring-opacity-50 scale-105' : ''}`}
+              style={{
+                left: step.x,
+                top: step.y,
+                zIndex: selectedStep === step.id ? 10 : 2,
+              }}
+              onMouseDown={(e) => handleMouseDown(e, step.id)}
+              onDoubleClick={(e) => {
+                e.preventDefault()
+                handleDoubleClick(step, 'title')
+              }}
+            >
+              <Card className={`relative transition-all duration-200 ${
+                step.highlighted 
+                  ? 'bg-green-500/10 backdrop-blur-lg border-green-500/30 shadow-lg' 
+                  : 'bg-card/10 backdrop-blur-lg border-border/30'
+              }`} style={{ width: step.width, height: step.height }}>
+                <CardHeader className="pb-2">
+                  <div className="flex items-center justify-between">
+                    <CardTitle 
+                      className="text-sm font-medium truncate cursor-text"
+                      onDoubleClick={(e) => {
+                        e.stopPropagation()
+                        handleDoubleClick(step, 'title')
+                      }}
+                      title="Double-click to edit"
+                    >
+                      {inlineEditing === step.id && inlineEditType === 'title' ? (
+                        <input
+                          ref={inlineEditInputRef}
+                          value={inlineEditValue}
+                          onChange={(e) => setInlineEditValue(e.target.value)}
+                          onKeyDown={handleInlineEditKeyPress}
+                          onBlur={saveInlineEdit}
+                          placeholder="Enter step title..."
+                          className="w-full bg-transparent text-sm font-medium border-none outline-none"
+                        />
+                      ) : (
+                        step.title
+                      )}
+                    </CardTitle>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className={`h-6 w-6 p-0 transition-colors ${
+                          step.highlighted 
+                            ? 'text-yellow-500 hover:text-yellow-400' 
+                            : 'text-muted-foreground hover:text-yellow-500'
+                        }`}
+                        onClick={(e: React.MouseEvent) => {
+                          e.stopPropagation()
+                          toggleStepHighlight(step.id)
+                        }}
+                        title={step.highlighted ? "Remove highlight" : "Highlight step"}
+                      >
+                        <Star className={`h-3 w-3 ${step.highlighted ? 'fill-current' : ''}`} />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 w-6 p-0 hover:bg-primary/10 hover:text-primary transition-colors"
+                        onMouseDown={(e: React.MouseEvent) => {
+                          e.stopPropagation()
+                          startDragConnect(e, step.id)
+                        }}
+                        title="Drag to connect"
+                      >
+                        <ArrowRight className="h-3 w-3" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 w-6 p-0 text-destructive"
+                        onClick={(e: React.MouseEvent) => {
+                          e.stopPropagation()
+                          setStepToDelete(step.id)
+                          setShowDeleteDialog(true)
+                        }}
+                        title="Delete step"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="pt-0 flex-1">
+                  <p 
+                    className="text-xs text-muted-foreground cursor-text break-words overflow-hidden"
+                    onDoubleClick={(e) => {
+                      e.stopPropagation()
+                      handleDoubleClick(step, 'description')
+                    }}
+                    title="Double-click to edit"
+                  >
+                    {inlineEditing === step.id && inlineEditType === 'description' ? (
+                      <textarea
+                        ref={inlineEditTextareaRef}
+                        value={inlineEditValue}
+                        onChange={(e) => setInlineEditValue(e.target.value)}
+                        onKeyDown={handleInlineEditKeyPress}
+                        onBlur={saveInlineEdit}
+                        placeholder="Enter step description..."
+                        className="w-full bg-transparent text-xs text-muted-foreground border-none outline-none resize-none overflow-hidden"
+                        rows={6}
+                        style={{ maxHeight: '8rem' }}
+                      />
+                    ) : (
+                      <span className="block" style={{ 
+                        display: '-webkit-box',
+                        WebkitLineClamp: 8,
+                        WebkitBoxOrient: 'vertical',
+                        overflow: 'hidden',
+                        wordBreak: 'break-word'
+                      }}>
+                        {step.description}
+                      </span>
+                    )}
+                  </p>
+                </CardContent>
+
+                {/* Resize handle - bottom right only */}
+                <div 
+                  className="absolute bottom-1 right-1 w-4 h-4 cursor-se-resize opacity-30 hover:opacity-60 transition-opacity"
+                  onMouseDown={(e) => startResize(e, step.id, 'se')}
+                  title="Drag to resize"
+                >
+                  <svg viewBox="0 0 24 24" fill="currentColor" className="w-full h-full text-muted-foreground">
+                    <path d="M22 22H20V20H22V22ZM22 18H20V16H22V18ZM18 22H16V20H18V22ZM18 18H16V16H18V18ZM14 22H12V20H14V22Z"/>
+                  </svg>
+                </div>
+              </Card>
+            </div>
+          ))}
+        </div>
+      </main>
+
+      {/* Edit Step Dialog */}
+      <Dialog open={!!editingStep} onOpenChange={() => cancelEdit()}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Journey Step</DialogTitle>
+            <DialogDescription>
+              Update the title and description for this step.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium">Title</label>
+              <Input
+                value={editTitle}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEditTitle(e.target.value)}
+                placeholder="Enter step title..."
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium">Description</label>
+              <Input
+                value={editDescription}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEditDescription(e.target.value)}
+                placeholder="Enter step description..."
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={cancelEdit}>
+              Cancel
+            </Button>
+            <Button onClick={saveEdit}>
+              Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Journey Step</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this step? This action cannot be undone and will also remove all connections to this step.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>
+              Cancel
+            </Button>
+            <Button 
+              variant="destructive" 
+              onClick={() => stepToDelete && deleteStep(stepToDelete)}
+            >
+              Delete Step
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Connection Dialog */}
+      <Dialog open={showConnectionDialog} onOpenChange={setShowConnectionDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Connect to Step</DialogTitle>
+            <DialogDescription>
+              Select a step to connect to from the current step.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 max-h-60 overflow-y-auto">
+            {steps
+              .filter(step => step.id !== connectionFrom)
+              .map(step => (
+                <Button
+                  key={step.id}
+                  variant="outline"
+                  className="w-full justify-start"
+                  onClick={() => createConnection(step.id)}
+                >
+                  <ArrowRight className="h-4 w-4 mr-2" />
+                  {step.title}
+                </Button>
+              ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowConnectionDialog(false)}>
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* AI Generation Modal */}
+      <Dialog open={showAIModal} onOpenChange={setShowAIModal}>
+        <DialogContent className="sm:max-w-[600px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5" />
+              Generate Journey with AI
+            </DialogTitle>
+            <DialogDescription>
+              Describe your customer journey and AI will generate a complete journey map with steps and connections.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium">Journey Description</label>
+              <textarea
+                value={aiPrompt}
+                onChange={(e) => setAIPrompt(e.target.value)}
+                placeholder="Describe the customer journey you want to create. For example: 'A customer journey for an e-commerce website from discovery to purchase'"
+                className="w-full min-h-[120px] p-3 border rounded-md bg-background text-foreground resize-none"
+                disabled={isGenerating}
+              />
+            </div>
+            
+            {aiError && (
+              <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md text-destructive text-sm">
+                {aiError}
+              </div>
+            )}
+            
+            <div className="text-xs text-muted-foreground">
+              💡 Tip: Be specific about the customer's goals, pain points, and the steps they take. The more detail you provide, the better the AI-generated journey will be.
+            </div>
+          </div>
+          
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => setShowAIModal(false)}
+              disabled={isGenerating}
+            >
+              Cancel
+            </Button>
+            <Button 
+              onClick={generateJourneyWithAI}
+              disabled={isGenerating || !aiPrompt.trim()}
+              className="flex items-center gap-2"
+            >
+              {isGenerating ? (
+                <>
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-4 w-4" />
+                  Generate Journey
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
